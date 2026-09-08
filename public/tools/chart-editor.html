@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>譜面ビューアー / Phase1-2</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#15181f; --line:#242835; --sub:#7c8494; --text:#e8eaf0;
+    --blue:#4da6ff; --yellow:#ffd54a; --red:#ff5a6e; --green:#3ddc97;
+    --accent:#6c7bf0;
+    --mono: 'Consolas','SF Mono','Menlo',monospace;
+  }
+  *{box-sizing:border-box;}
+  body,html{ margin:0; padding:0; height:100%; overflow:hidden;
+    font-family:'Hiragino Sans','Segoe UI',sans-serif; background:var(--bg); color:var(--text); }
+
+  .app-container{ display:flex; height:100vh; padding:16px; gap:16px; }
+
+  .editor-section, .viewer-section{
+    display:flex; flex-direction:column; background:var(--panel); border-radius:14px;
+    box-shadow:0 10px 30px rgba(0,0,0,.35); overflow:hidden; border:1px solid var(--line);
+  }
+  .editor-section{ flex:0 0 380px; }
+  .app-container.view-mode .editor-section{ display:none; }
+  .viewer-section{ flex:1; min-width:0; }
+
+  .header-bar{
+    padding:12px 18px; background:#1a2230; font-weight:700; font-size:12.5px;
+    display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line);
+    letter-spacing:.02em; color:var(--text);
+  }
+
+  textarea{
+    flex:1; border:none; padding:16px; font-family:var(--mono); font-size:12.5px; line-height:1.6;
+    resize:none; outline:none; background:#0b0d12; color:var(--text);
+  }
+
+  .controls-bar{
+    padding:8px 18px; background:#12151c; border-bottom:1px solid var(--line);
+    display:flex; gap:18px; font-size:11.5px; align-items:center; flex-wrap:wrap; color:var(--sub);
+  }
+  .control-group{ display:flex; align-items:center; gap:6px; }
+  input[type="number"]{ width:56px; padding:3px 6px; border:1px solid var(--line); border-radius:4px; background:#0b0d12; color:var(--text); }
+  input[type="checkbox"]{ accent-color:var(--accent); }
+
+  .courses{ display:flex; gap:6px; flex-wrap:wrap; }
+  .course-tab{
+    padding:4px 11px; border-radius:5px; border:1px solid var(--line); background:#171a22;
+    color:var(--sub); font-size:11.5px; cursor:pointer;
+  }
+  .course-tab.active{ border-color:var(--blue); color:var(--text); background:#1e2838; }
+
+  .stat-row{ display:flex; gap:16px; padding:7px 18px; background:#12151c; border-bottom:1px solid var(--line); font-size:11px; color:var(--sub); flex-wrap:wrap; }
+  .stat-row b{ color:var(--text); font-family:var(--mono); }
+
+  .warn-strip{ max-height:70px; overflow-y:auto; background:#1c1416; border-bottom:1px solid #3a2226; }
+  .warn-strip .warn{ padding:3px 18px; font-size:11px; color:#ffb1a3; font-family:var(--mono); }
+
+  .legend{ display:flex; gap:12px; flex-wrap:wrap; padding:6px 18px; font-size:10.5px; color:var(--sub); background:#12151c; border-bottom:1px solid var(--line); }
+  .legend span{ display:inline-flex; align-items:center; gap:4px; }
+  .swatch{ width:9px; height:9px; border-radius:2px; display:inline-block; }
+
+  #chart-container{
+    flex:1; overflow-y:auto; overflow-x:auto; position:relative;
+    padding:60px 40px; display:flex; flex-direction:column-reverse; align-items:center;
+    background-image:radial-gradient(#1c2029 1px, transparent 1px); background-size:26px 26px;
+    background-color:#0a0c10;
+  }
+
+  .measure-block{
+    position:relative; border-left:2px solid #333c52; border-right:2px solid #333c52;
+    background:rgba(255,255,255,.015); flex-shrink:0;
+  }
+  .measure-line-bottom{ position:absolute; left:0; right:0; height:2px; background:#333c52; bottom:0; }
+  .measure-number{ position:absolute; left:-30px; bottom:2px; font-size:10px; color:#5a6478; font-family:var(--mono); }
+  .lane-divider{ position:absolute; top:0; bottom:0; width:1px; background:#1c212c; z-index:0; }
+
+  .note{
+    position:absolute; border-radius:5px; z-index:3; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .note.trace{ background:transparent !important; border:2px dashed; box-shadow:none; }
+  .note.none{ visibility:hidden; }
+  .long-body{ position:absolute; border-radius:5px; opacity:.5; z-index:1; }
+  .mid-dot{ position:absolute; border-radius:50%; z-index:2; box-shadow:0 0 4px rgba(255,255,255,.6); }
+
+  .dir-wedge{ position:absolute; width:0; height:0; z-index:4; filter:drop-shadow(0 0 2px rgba(0,0,0,.6)); }
+  .dir-wedge.dir-up{ border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:11px solid; top:-9px; left:50%; transform:translateX(-50%); }
+  .dir-wedge.dir-down{ border-left:7px solid transparent; border-right:7px solid transparent; border-top:11px solid; bottom:-9px; left:50%; transform:translateX(-50%); }
+  .dir-wedge.dir-left{ border-top:7px solid transparent; border-bottom:7px solid transparent; border-right:11px solid; left:-9px; top:50%; transform:translateY(-50%); }
+  .dir-wedge.dir-right{ border-top:7px solid transparent; border-bottom:7px solid transparent; border-left:11px solid; right:-9px; top:50%; transform:translateY(-50%); }
+
+  .change-tag{
+    position:absolute; left:calc(100% + 8px); transform:translateY(50%);
+    background:#ff7675; color:#1a0e0e; padding:2px 7px; border-radius:5px;
+    font-size:10px; white-space:nowrap; font-weight:700; z-index:5;
+  }
+  .change-tag.measure-tag{ background:#a29bfe; }
+  .change-tag.skill-tag{ background:#3ddc97; color:#08150f; }
+  .change-tag.fever-tag{ background:#ff8fd0; color:#2a0f1f; }
+
+  .stats-bar{ padding:8px 18px; background:#12151c; border-top:1px solid var(--line); font-size:11px; display:flex; gap:16px; color:var(--sub); }
+  .stat-val{ font-weight:700; color:var(--text); font-family:var(--mono); }
+
+  .help-btn{
+    position:fixed; top:22px; right:22px; z-index:50;
+    background:#1a2230; border:1px solid #2f3850; color:var(--text);
+    width:30px; height:30px; border-radius:50%; font-size:14px; font-weight:700;
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .help-btn:hover{ border-color:var(--blue); }
+  .save-btn{
+    background:#1a2230; border:1px solid #2f3850; color:var(--text);
+    border-radius:5px; padding:3px 12px; font-size:11px; cursor:pointer;
+  }
+  .save-btn:hover{ border-color:var(--blue); }
+  .save-btn:disabled{ opacity:.5; cursor:default; }  .modal-overlay{ position:fixed; inset:0; background:rgba(6,7,10,.72); z-index:100; display:flex; align-items:center; justify-content:center; padding:40px; }
+  .modal-overlay.hidden{ display:none; }
+  .modal{ background:var(--panel); border:1px solid var(--line); border-radius:10px; width:min(720px,100%); max-height:86vh; overflow-y:auto; padding:22px 26px; }
+  .modal h2{ margin:0 0 4px; font-size:16px; }
+  .modal .modal-close{ float:right; background:none; border:none; color:var(--sub); font-size:18px; cursor:pointer; }
+  .modal h3{ font-size:12px; color:var(--sub); margin:20px 0 8px; letter-spacing:.02em; }
+  .modal p{ font-size:12.5px; line-height:1.7; color:#c3c8d4; margin:4px 0; }
+  .modal code{ background:#0b0d12; border:1px solid var(--line); border-radius:4px; padding:1px 5px; font-family:var(--mono); }
+  .note-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; }
+  .note-entry{ display:flex; align-items:center; gap:8px; background:#0f1218; border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  .note-badge{ width:22px; height:22px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:700; font-size:12px; color:#0b0d12; flex-shrink:0; }
+  .note-badge.trace{ background:transparent !important; border:1.5px dashed; color:var(--text); }
+  .note-entry .label{ font-size:11.5px; color:#c3c8d4; }
+</style>
+</head>
+<body>
+<button class="help-btn" id="helpBtn" title="ノーツ記法ヘルプ">?</button>
+<div class="modal-overlay hidden" id="helpOverlay">
+  <div class="modal">
+    <button class="modal-close" id="helpClose">✕</button>
+    <h2>ノーツの置き方 / 記法ヘルプ</h2>
+    <p>1文字＝レーン1つぶんが基本。12レーン分をコンマ区切りの同時刻グループにまとめ、セミコロンで小節を区切ります。</p>
+    <h3>基本記法</h3>
+    <p><code>00000000(1111),</code> → 8個の空レーンのあと、4レーン幅の丸カッコで1つのノーツ（この場合は通常ノーツ）を表現。カッコ内は同じ文字を幅ぶん繰り返します。</p>
+    <p><code>,</code> は同時刻ノーツのまとまりの区切り、<code>;</code> は小節の区切りです。</p>
+    <h3>省略記法</h3>
+    <p>12レーンに満たない場合、内部で12の約数になるよう自動的に均等展開します。例：<code>01,</code> → <code>(000000)(111111),</code></p>
+    <h3>ロング始点・終点の紐付け(ID)</h3>
+    <p>始点・終点・フリック始点/終点の文字の直後に2桁の数字を付けるとID扱いになり、同じIDの始点と終点が自動で結ばれます。単一レーンなら <code>a01</code>、複数レーンにまたがる場合は <code>(aaaa)01</code> のようにカッコの外側に付けます。</p>
+    <h3>BPM・拍子の変更</h3>
+    <p><code>{BPM:160}</code> ／ <code>{MEASURE:3/4}</code> をコンマ区切りグループの先頭に置くと、そのグループの時点から適用されます（レーン数のカウントには含まれません）。</p>
+    <h3>スキル・FEVER開始タイミング</h3>
+    <p>同じ要領で <code>{SKILL:1}</code> 〜 <code>{SKILL:6}</code>(ソロプレイの6回のスキル発動タイミング)、<code>{FEVER}</code>(FEVER開始タイミング)を指定できます。SKILLは1〜6の番号必須・重複不可、FEVERは1曲につき1回を想定しています。右側のプレビューに色付きタグとして表示され、上部の統計欄に指定済み数が出ます。</p>
+    <div id="noteReference"></div>
+  </div>
+</div>
+
+<div class="app-container" id="appContainer">
+  <section class="editor-section">
+    <div class="header-bar"><span>CHART SOURCE</span><span id="fileNameLabel" style="font-weight:400;color:var(--sub);font-size:11px;"></span><button id="saveBtn" class="save-btn" style="display:none;">保存</button></div>
+    <textarea id="src" spellcheck="false"></textarea>
+  </section>
+
+  <section class="viewer-section">
+    <div class="header-bar">
+      <span>LIVE PREVIEW</span>
+      <div class="courses" id="courseTabs"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="control-group"><label><input type="checkbox" id="auto-scale" checked> 密度で伸縮</label></div>
+      <div class="control-group"><label>小節の基本高さ: <input type="number" id="base-height" value="160" step="10"></label></div>
+      <div class="control-group"><label>1スロットあたり(密度モード): <input type="number" id="slot-height" value="22" step="1"></label></div>
+    </div>
+    <div class="stat-row" id="statRow"></div>
+    <div class="warn-strip" id="warnStrip" style="display:none;"></div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--blue)"></span>通常</span>
+      <span><span class="swatch" style="background:var(--yellow)"></span>クリティカル</span>
+      <span><span class="swatch" style="background:var(--red)"></span>フリック</span>
+      <span><span class="swatch" style="background:var(--green)"></span>ロング/トレース</span>
+      <span>点線 = トレース</span>
+    </div>
+    <div id="chart-container"></div>
+    <div class="stats-bar" id="statsBar"></div>
+  </section>
+</div>
+
+<script>
+const DEFAULT_SRC = `TITLE:セカイ
+SUBTITLE:DECO*27
+BPM:133
+
+COURSE:MASTER
+LEVEL:27
+#START
+{SKILL:1}00000000(1111),0000(1111)(22)00;
+{BPM:150}00000000(2222),00000000000a01,
+00000000000f01;
+{FEVER}0000A0000000,0000m020000000,
+0000s020000000;
+01,00(k)000000000,000000000000;
+#END
+
+COURSE:EXPERT
+LEVEL:22
+#START
+00000000(1111),0000000000(22);
+{MEASURE:3/4}000000000000,000000000000,000000000000;
+#END
+`;
+
+// ---- type metadata ----------------------------------------------------
+const TAP = {
+  '1':{name:'通常',color:'var(--blue)',trace:false},
+  '2':{name:'クリティカル',color:'var(--yellow)',trace:false},
+  '3':{name:'トレース',color:'var(--green)',trace:true},
+  '4':{name:'クリティカルトレース',color:'var(--yellow)',trace:true},
+};
+const FLICK = {
+  'A':{name:'上フリック',dir:'↑',color:'var(--red)',trace:false},
+  'B':{name:'左フリック',dir:'←',color:'var(--red)',trace:false},
+  'C':{name:'右フリック',dir:'→',color:'var(--red)',trace:false},
+  'D':{name:'上フリックC',dir:'↑',color:'var(--yellow)',trace:false},
+  'E':{name:'左フリックC',dir:'←',color:'var(--yellow)',trace:false},
+  'F':{name:'右フリックC',dir:'→',color:'var(--yellow)',trace:false},
+  'G':{name:'上フリックT',dir:'↑',color:'var(--red)',trace:true},
+  'H':{name:'左フリックT',dir:'←',color:'var(--red)',trace:true},
+  'I':{name:'右フリックT',dir:'→',color:'var(--red)',trace:true},
+  'J':{name:'上フリックTC',dir:'↑',color:'var(--yellow)',trace:true},
+  'K':{name:'左フリックTC',dir:'←',color:'var(--yellow)',trace:true},
+  'L':{name:'右フリックTC',dir:'→',color:'var(--yellow)',trace:true},
+};
+const LONG_START = {
+  'a':{name:'始点/通常',color:'var(--green)',trace:false,none:false},
+  'b':{name:'始点/クリティカル',color:'var(--green)',trace:false,none:false},
+  'c':{name:'始点/トレース',color:'var(--green)',trace:true,none:false},
+  'd':{name:'始点/クリティカルトレース',color:'var(--yellow)',trace:true,none:false},
+  'e':{name:'始点/ノーツなし',color:'var(--green)',trace:false,none:true},
+};
+const LONG_END = {
+  'f':{name:'終点/通常',color:'var(--green)',trace:false,none:false},
+  'g':{name:'終点/クリティカル',color:'var(--green)',trace:false,none:false},
+  'h':{name:'終点/トレース',color:'var(--green)',trace:true,none:false},
+  'i':{name:'終点/クリティカルトレース',color:'var(--yellow)',trace:true,none:false},
+  'j':{name:'終点/ノーツなし',color:'var(--green)',trace:false,none:true},
+};
+const LONG_MID = {
+  'k':{name:'中間/緑',color:'var(--green)'},
+  'l':{name:'中間/黄',color:'var(--yellow)'},
+};
+const FLICK_LONG_START = {
+  'm':{name:'F始点/上',dir:'↑',color:'var(--green)'},
+  'n':{name:'F始点/左',dir:'←',color:'var(--green)'},
+  'o':{name:'F始点/右',dir:'→',color:'var(--green)'},
+  'p':{name:'F始点/上C',dir:'↑',color:'var(--yellow)'},
+  'q':{name:'F始点/左C',dir:'←',color:'var(--yellow)'},
+  'r':{name:'F始点/右C',dir:'→',color:'var(--yellow)'},
+};
+const FLICK_LONG_END = {
+  's':{name:'F終点/上',dir:'↑',color:'var(--green)'},
+  't':{name:'F終点/左',dir:'←',color:'var(--green)'},
+  'u':{name:'F終点/右',dir:'→',color:'var(--green)'},
+  'v':{name:'F終点/上C',dir:'↑',color:'var(--yellow)'},
+  'w':{name:'F終点/左C',dir:'←',color:'var(--yellow)'},
+  'x':{name:'F終点/右C',dir:'→',color:'var(--yellow)'},
+};
+const LINKABLE = new Set([...Object.keys(LONG_START),...Object.keys(LONG_END),
+  ...Object.keys(FLICK_LONG_START),...Object.keys(FLICK_LONG_END)]);
+function classify(ch){
+  if (ch==='0') return {kind:'empty'};
+  if (TAP[ch]) return {kind:'tap',...TAP[ch]};
+  if (FLICK[ch]) return {kind:'flick',...FLICK[ch]};
+  if (LONG_START[ch]) return {kind:'long_start',...LONG_START[ch]};
+  if (LONG_END[ch]) return {kind:'long_end',...LONG_END[ch]};
+  if (LONG_MID[ch]) return {kind:'long_mid',...LONG_MID[ch]};
+  if (FLICK_LONG_START[ch]) return {kind:'flick_long_start',...FLICK_LONG_START[ch]};
+  if (FLICK_LONG_END[ch]) return {kind:'flick_long_end',...FLICK_LONG_END[ch]};
+  return null;
+}
+function dirName(arrow){ return {'↑':'up','↓':'down','←':'left','→':'right'}[arrow] || 'up'; }
+function changeLabel(ch){
+  if(ch.type==='BPM') return `BPM ${ch.value}`;
+  if(ch.type==='MEASURE') return `拍子 ${ch.value}`;
+  if(ch.type==='SKILL') return `SKILL ${ch.value}`;
+  if(ch.type==='FEVER') return 'FEVER';
+  return ch.type;
+}
+function changeTagClass(ch){
+  if(ch.type==='MEASURE') return 'measure-tag';
+  if(ch.type==='SKILL') return 'skill-tag';
+  if(ch.type==='FEVER') return 'fever-tag';
+  return '';
+}
+function wedgeColorProp(arrow){ return {'↑':'border-bottom-color','↓':'border-top-color','←':'border-right-color','→':'border-left-color'}[arrow] || 'border-bottom-color'; }
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ---- parser -------------------------------------------------------------
+function tokenizeGroup(str, warnings, ctx){
+  const tokens=[]; let i=0;
+  while(i<str.length){
+    const c=str[i];
+    if(c==='('){
+      const close=str.indexOf(')',i);
+      if(close<0){ warnings.push(ctx+': 括弧が閉じていません "'+str.slice(i)+'"'); break; }
+      const content=str.slice(i+1,close);
+      i=close+1;
+      let id=null;
+      if(LINKABLE.has(content[0]) && /^\d\d/.test(str.slice(i,i+2))){ id=str.slice(i,i+2); i+=2; }
+      tokens.push({char:content[0], width:content.length, id});
+    } else {
+      i++;
+      let id=null;
+      if(LINKABLE.has(c) && /^\d\d/.test(str.slice(i,i+2))){ id=str.slice(i,i+2); i+=2; }
+      tokens.push({char:c, width:1, id});
+    }
+  }
+  return tokens;
+}
+function expandTokens(tokens, warnings, ctx){
+  const total = tokens.reduce((s,t)=>s+t.width,0);
+  if(total===12) return tokens;
+  if(total>0 && 12%total===0){ const factor=12/total; return tokens.map(t=>({...t, width:t.width*factor})); }
+  warnings.push(ctx+': グリッド合計が'+total+'で12の約数ではありません(そのまま解釈します)');
+  return tokens;
+}
+function parseGroup(raw){
+  let str = raw, directive=null;
+  const m = str.match(/^\{(BPM|MEASURE|SKILL|FEVER)(?::([^}]+))?\}/);
+  if(m){ directive={type:m[1], value:m[2]!==undefined?m[2]:null}; str=str.slice(m[0].length); }
+  return {directive, notesStr:str};
+}
+
+function applyDirective(directive, state, pendingChanges, tracker, warnings, ctx){
+  if(directive.type==='BPM'){
+    state.bpm = parseFloat(directive.value);
+    pendingChanges.push({type:'BPM', value:state.bpm});
+  } else if(directive.type==='MEASURE'){
+    const [n,d] = directive.value.split('/').map(Number);
+    state.timesig = {n,d};
+    pendingChanges.push({type:'MEASURE', value:`${n}/${d}`});
+  } else if(directive.type==='SKILL'){
+    const idx = parseInt(directive.value, 10);
+    if(!Number.isInteger(idx) || idx<1 || idx>6){
+      warnings.push(ctx+`: {SKILL:${directive.value}} は1〜6の番号で指定してください`);
+    } else if(tracker.skillSeen.has(idx)){
+      warnings.push(ctx+`: SKILL ${idx} が複数回指定されています`);
+    } else {
+      tracker.skillSeen.add(idx);
+    }
+    pendingChanges.push({type:'SKILL', value:directive.value});
+  } else if(directive.type==='FEVER'){
+    tracker.feverCount++;
+    if(tracker.feverCount>1) warnings.push(ctx+': {FEVER}が複数回指定されています(1曲につき1回を想定)');
+    pendingChanges.push({type:'FEVER', value:null});
+  }
+}
+
+function parseCourse(courseName, level, body){
+  const warnings=[];
+  const clean = body.replace(/\s+/g,'');
+  const measuresRaw = clean.split(';').filter(m=>m.length>0);
+  const state = { bpm:null, timesig:{n:4,d:4} };
+  const tracker = { skillSeen:new Set(), feverCount:0 };
+  const rows=[];
+  const openLongs={};
+  const longSegments=[];
+  let totalNotes=0;
+  let pendingChanges=[];
+
+  measuresRaw.forEach((measureStr, mIdx)=>{
+    const groupsRaw = measureStr.split(',').filter(g=>g.length>0);
+    const parsedGroups = groupsRaw.map(g=>parseGroup(g));
+    const realGroups = parsedGroups.filter(g=>g.notesStr.length>0);
+    const N = realGroups.length;
+    const ctx0 = `COURSE ${courseName} 小節${mIdx+1}`;
+    if(N===0){
+      parsedGroups.forEach(g=>{
+        if(g.directive) applyDirective(g.directive, state, pendingChanges, tracker, warnings, ctx0);
+      });
+      return;
+    }
+    const quarterMs = ()=> 60000/(state.bpm||120);
+    const measureDurMs = ()=> quarterMs()*4*state.timesig.n/state.timesig.d;
+    let rIdx=0;
+    parsedGroups.forEach(g=>{
+      if(g.directive) applyDirective(g.directive, state, pendingChanges, tracker, warnings, ctx0);
+      if(g.notesStr.length===0) return;
+      const ctx = ctx0;
+      let tokens = tokenizeGroup(g.notesStr, warnings, ctx);
+      tokens = expandTokens(tokens, warnings, ctx);
+      let lane=0;
+      const rowTokens=[];
+      tokens.forEach(t=>{
+        const laneStart=lane, laneEnd=lane+t.width-1;
+        lane += t.width;
+        rowTokens.push({char:t.char, laneStart, laneEnd, id:t.id, info:classify(t.char)});
+      });
+      const timeMs = measureDurMs()*(rIdx/N);
+      const globalRow = rows.length;
+      rows.push({measureIdx:mIdx, rowInMeasure:rIdx, slotsInMeasure:N, bpm:state.bpm, timesig:{...state.timesig}, timeMs, tokens:rowTokens, changes:pendingChanges});
+      pendingChanges=[];
+
+      rowTokens.forEach(tok=>{
+        if(!tok.info){ warnings.push(ctx+`: 未知のノーツ記号 "${tok.char}"`); return; }
+        const k = tok.info.kind;
+        if(k==='empty') return;
+        if(k==='tap'||k==='flick'){ totalNotes++; }
+        else if(k==='long_start'||k==='flick_long_start'){
+          if(!tok.info.none) totalNotes++;
+          if(!tok.id) warnings.push(ctx+`: 始点 "${tok.char}" にIDがありません(終点と紐付けできません)`);
+          else openLongs[tok.id]={char:tok.char, laneStart:tok.laneStart, laneEnd:tok.laneEnd, row:globalRow, mids:[]};
+        }
+        else if(k==='long_end'||k==='flick_long_end'){
+          if(!tok.info.none) totalNotes++;
+          if(!tok.id) warnings.push(ctx+`: 終点 "${tok.char}" にIDがありません`);
+          else if(!openLongs[tok.id]) warnings.push(ctx+`: ID ${tok.id} に対応する始点が見つかりません`);
+          else {
+            const st = openLongs[tok.id];
+            longSegments.push({id:tok.id, startRow:st.row, endRow:globalRow, startLane:st.laneStart, endLane:tok.laneStart});
+            delete openLongs[tok.id];
+          }
+        }
+        else if(k==='long_mid'){ totalNotes++; }
+      });
+      rIdx++;
+    });
+  });
+
+  Object.keys(openLongs).forEach(id=>warnings.push(`未閉合のロング始点 (ID ${id})`));
+  const missingSkills = [1,2,3,4,5,6].filter(n=>!tracker.skillSeen.has(n));
+  return {courseName, level, rows, longSegments, totalNotes, measureCount: measuresRaw.length, warnings,
+    skillCount: tracker.skillSeen.size, feverCount: tracker.feverCount, missingSkills};
+}
+
+function parseAll(src){
+  const lines = src.split('\n');
+  let title='', subtitle='', headerBpm=null, i=0;
+  const courses=[];
+  while(i<lines.length && !/^COURSE:/.test(lines[i])){
+    const l=lines[i];
+    if(/^TITLE:/.test(l)) title=l.slice(6).trim();
+    else if(/^SUBTITLE:/.test(l)) subtitle=l.slice(9).trim();
+    else if(/^BPM:/.test(l)) headerBpm=parseFloat(l.slice(4).trim());
+    i++;
+  }
+  while(i<lines.length){
+    if(/^COURSE:/.test(lines[i])){
+      const courseName=lines[i].slice(7).trim(); i++;
+      let level='';
+      if(i<lines.length && /^LEVEL:/.test(lines[i])){ level=lines[i].slice(6).trim(); i++; }
+      while(i<lines.length && !/^#START/.test(lines[i])) i++;
+      i++;
+      let body='';
+      while(i<lines.length && !/^#END/.test(lines[i])){ body+=lines[i]+'\n'; i++; }
+      i++;
+      const parsed = parseCourse(courseName, level, body);
+      parsed.bpmInit = headerBpm;
+      courses.push(parsed);
+    } else i++;
+  }
+  courses.forEach(c=>{ c.rows.forEach(r=>{ if(r.bpm===null) r.bpm=c.bpmInit; }); });
+  return {title, subtitle, headerBpm, courses};
+}
+
+// ---- render (measure-block layout, column-reverse) -----------------------
+const LANE_WIDTH = 26;
+const NOTE_HEIGHT = 16;
+let currentCourseIdx = 0;
+
+function buildNoteReference(){
+  const sections = [
+    ['通常ノーツ / タップ', TAP],['フリックノーツ', FLICK],
+    ['ロング始点', LONG_START],['ロング終点', LONG_END],['ロング中間', LONG_MID],
+    ['ロング始点(フリック)', FLICK_LONG_START],['ロング終点(フリック)', FLICK_LONG_END],
+  ];
+  let out='';
+  sections.forEach(([title, table])=>{
+    out += `<h3>${title}</h3><div class="note-grid">`;
+    Object.entries(table).forEach(([ch,info])=>{
+      const traceCls = info.trace ? 'trace' : '';
+      const style = info.trace ? `border-color:${info.color};` : `background:${info.color};`;
+      const dir = info.dir ? ` ${info.dir}` : '';
+      out += `<div class="note-entry"><div class="note-badge ${traceCls}" style="${style}">${ch}</div><div class="label">${info.name}${dir}</div></div>`;
+    });
+    out += `</div>`;
+  });
+  document.getElementById('noteReference').innerHTML = out;
+}
+
+function render(){
+  const src = document.getElementById('src').value;
+  let data;
+  try{ data = parseAll(src); }
+  catch(e){ document.getElementById('chart-container').innerHTML = ''; document.getElementById('statsBar').textContent='パースエラー: '+e.message; return; }
+
+  if(data.courses.length===0){ document.getElementById('chart-container').innerHTML=''; return; }
+  if(currentCourseIdx>=data.courses.length) currentCourseIdx=0;
+  const c = data.courses[currentCourseIdx];
+
+  // course tabs
+  document.getElementById('courseTabs').innerHTML = data.courses.map((cc,idx)=>
+    `<div class="course-tab ${idx===currentCourseIdx?'active':''}" data-idx="${idx}">${escapeHtml(cc.courseName)} Lv.${escapeHtml(cc.level)}</div>`
+  ).join('');
+  document.querySelectorAll('.course-tab').forEach(t=>{
+    t.addEventListener('click', ()=>{ currentCourseIdx=parseInt(t.dataset.idx); render(); });
+  });
+
+  document.getElementById('statRow').innerHTML =
+    `<span>${escapeHtml(data.title||'(無題)')} <span style="color:#454c5e">/ ${escapeHtml(data.subtitle||'')}</span></span>`;
+
+  const warnEl = document.getElementById('warnStrip');
+  if(c.warnings.length){
+    warnEl.style.display='block';
+    warnEl.innerHTML = c.warnings.map(w=>`<div class="warn">⚠ ${escapeHtml(w)}</div>`).join('');
+  } else { warnEl.style.display='none'; warnEl.innerHTML=''; }
+
+  const isAutoScale = document.getElementById('auto-scale').checked;
+  const baseHeight = parseInt(document.getElementById('base-height').value)||160;
+  const slotHeight = parseInt(document.getElementById('slot-height').value)||22;
+
+  // group rows by measure
+  const byMeasure = [];
+  c.rows.forEach(r=>{ (byMeasure[r.measureIdx] = byMeasure[r.measureIdx]||[]).push(r); });
+
+  const container = document.getElementById('chart-container');
+  container.innerHTML='';
+  const rowLookup = {}; // globalRow -> {measureBlock, localBottom, measureHeight}
+  let globalRow = 0;
+
+  for(let mIdx=0; mIdx<c.measureCount; mIdx++){
+    const rowsInMeasure = byMeasure[mIdx] || [];
+    const N = rowsInMeasure.length || 1;
+    const measureHeight = isAutoScale ? Math.max(N*slotHeight, 40) : baseHeight;
+
+    const mDiv = document.createElement('div');
+    mDiv.className='measure-block';
+    mDiv.style.width = (12*LANE_WIDTH)+'px';
+    mDiv.style.height = measureHeight+'px';
+    mDiv.innerHTML = `<div class="measure-line-bottom"></div><div class="measure-number">#${String(mIdx+1).padStart(3,'0')}</div>`;
+    for(let i=1;i<12;i++){
+      const ld=document.createElement('div'); ld.className='lane-divider'; ld.style.left=(i*LANE_WIDTH)+'px'; mDiv.appendChild(ld);
+    }
+
+    rowsInMeasure.forEach(row=>{
+      const y = (row.rowInMeasure/row.slotsInMeasure)*measureHeight;
+      rowLookup[globalRow] = {mDiv, localBottom:y, measureHeight};
+
+      row.changes.forEach(ch=>{
+        const tag=document.createElement('div');
+        tag.className='change-tag '+changeTagClass(ch);
+        tag.style.bottom = y+'px';
+        tag.textContent = changeLabel(ch);
+        mDiv.appendChild(tag);
+      });
+
+      row.tokens.forEach(tok=>{
+        if(!tok.info || tok.info.kind==='empty') return;
+        if(tok.info.kind==='long_mid'){
+          const dot=document.createElement('div');
+          dot.className='mid-dot';
+          const cx = (tok.laneStart+0.5)*LANE_WIDTH;
+          dot.style.width='10px'; dot.style.height='10px';
+          dot.style.left=(cx-5)+'px'; dot.style.bottom=(y-5)+'px';
+          dot.style.background = tok.info.color;
+          mDiv.appendChild(dot);
+          return;
+        }
+        const note=document.createElement('div');
+        const traceCls = tok.info.trace ? 'trace' : '';
+        const noneCls = tok.info.none ? 'none' : '';
+        note.className = `note ${traceCls} ${noneCls}`;
+        const left = tok.laneStart*LANE_WIDTH+2;
+        const width = (tok.laneEnd-tok.laneStart+1)*LANE_WIDTH-4;
+        note.style.left = left+'px';
+        note.style.width = width+'px';
+        note.style.height = NOTE_HEIGHT+'px';
+        note.style.bottom = (y-NOTE_HEIGHT/2)+'px';
+        if(tok.info.trace) note.style.borderColor = tok.info.color; else note.style.background = tok.info.color;
+        if(tok.info.dir){
+          const w=document.createElement('div');
+          w.className = `dir-wedge dir-${dirName(tok.info.dir)}`;
+          w.style[wedgeColorProp(tok.info.dir)] = tok.info.trace ? tok.info.color : '#fff';
+          note.appendChild(w);
+        }
+        mDiv.appendChild(note);
+      });
+      globalRow++;
+    });
+
+    container.appendChild(mDiv);
+  }
+
+  // cross-measure long bars via absolute overlay
+  c.longSegments.forEach(seg=>{
+    const s = rowLookup[seg.startRow], e = rowLookup[seg.endRow];
+    if(!s || !e) return;
+    if(s.mDiv === e.mDiv){
+      // same measure: simple bar inside the block
+      const bar=document.createElement('div');
+      bar.className='long-body';
+      const lane = seg.startLane;
+      bar.style.left = (lane*LANE_WIDTH + LANE_WIDTH/2 - 4)+'px';
+      bar.style.width = '8px';
+      const top = Math.min(s.localBottom, e.localBottom), bottom = Math.max(s.localBottom, e.localBottom);
+      bar.style.bottom = top+'px';
+      bar.style.height = (bottom-top)+'px';
+      bar.style.background = 'var(--green)';
+      s.mDiv.appendChild(bar);
+    } else {
+      // spans multiple measures: draw one overlay bar per container using offsetTop (post-layout)
+      const startAbsTop = s.mDiv.offsetTop + (s.measureHeight - s.localBottom);
+      const endAbsTop = e.mDiv.offsetTop + (e.measureHeight - e.localBottom);
+      const top = Math.min(startAbsTop, endAbsTop), bottom = Math.max(startAbsTop, endAbsTop);
+      const bar=document.createElement('div');
+      bar.className='long-body';
+      bar.style.position='absolute';
+      bar.style.left = (s.mDiv.offsetLeft + seg.startLane*LANE_WIDTH + LANE_WIDTH/2 - 4)+'px';
+      bar.style.width='8px';
+      bar.style.top = top+'px';
+      bar.style.height = (bottom-top)+'px';
+      bar.style.background = 'var(--green)';
+      container.appendChild(bar);
+    }
+  });
+
+  document.getElementById('statsBar').innerHTML =
+    `<div>NOTES: <span class="stat-val">${c.totalNotes}</span></div>
+     <div>MEASURES: <span class="stat-val">${c.measureCount}</span></div>
+     <div>LONG: <span class="stat-val">${c.longSegments.length}</span></div>
+     <div>BPM: <span class="stat-val">${c.bpmInit||'-'}</span></div>
+     <div>SKILL: <span class="stat-val" style="${c.skillCount<6?'color:#ffb1a3;':''}">${c.skillCount}/6</span></div>
+     <div>FEVER: <span class="stat-val" style="${c.feverCount<1?'color:#5a6478;':''}">${c.feverCount>0?'指定済み':'未指定'}</span></div>`;
+}
+
+buildNoteReference();
+document.getElementById('helpBtn').addEventListener('click', ()=>document.getElementById('helpOverlay').classList.remove('hidden'));
+document.getElementById('helpClose').addEventListener('click', ()=>document.getElementById('helpOverlay').classList.add('hidden'));
+document.getElementById('helpOverlay').addEventListener('click', (e)=>{ if(e.target.id==='helpOverlay') e.target.classList.add('hidden'); });
+
+document.getElementById('src').value = DEFAULT_SRC;
+document.getElementById('src').addEventListener('input', render);
+document.getElementById('auto-scale').addEventListener('change', render);
+document.getElementById('base-height').addEventListener('input', render);
+document.getElementById('slot-height').addEventListener('input', render);
+render();
+
+// ---- 親ウィンドウ(Next.jsアプリ)とのpostMessage連携 -----------------------
+// 親から{type:'load-chart', filename, content, courseName}を受け取ったら読み込み、
+// 保存ボタンで{type:'save-chart', content}を親に送り返す。
+const viewMode = new URLSearchParams(location.search).get('mode') === 'view';
+if(viewMode) document.getElementById('appContainer').classList.add('view-mode');
+
+let currentFileName = null;
+window.addEventListener('message', (e)=>{
+  const msg = e.data;
+  if(!msg || msg.type !== 'load-chart') return;
+  currentFileName = msg.filename || null;
+  document.getElementById('src').value = msg.content || '';
+  document.getElementById('fileNameLabel').textContent = currentFileName || '';
+  document.getElementById('saveBtn').style.display = (currentFileName && !viewMode) ? 'inline-block' : 'none';
+  if(msg.courseName){
+    try{
+      const data = parseAll(msg.content || '');
+      const idx = data.courses.findIndex(c=>c.courseName.toUpperCase()===String(msg.courseName).toUpperCase());
+      if(idx>=0) currentCourseIdx = idx;
+    }catch(err){ /* ignore, falls back to currentCourseIdx as-is */ }
+  }
+  render();
+});
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  if(!currentFileName) return;
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  window.parent.postMessage({ type:'save-chart', filename: currentFileName, content: document.getElementById('src').value }, '*');
+  setTimeout(()=>{ btn.disabled=false; btn.textContent='保存'; }, 800);
+});
+</script>
+</body>
+</html>
