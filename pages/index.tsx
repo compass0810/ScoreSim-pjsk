@@ -4,9 +4,6 @@ import Link from "next/link";
 import { Song, DifficultyKey } from "@/lib/csv";
 import { SongCard } from "@/components/SongCard";
 import { DIFFICULTY_LABEL } from "@/components/DifficultyBadge";
-import { EditorModal } from "@/components/EditorModal";
-
-const STORAGE_KEY = "proseka-score-sim:csv-url";
 
 type SortKey = "id" | "title" | DifficultyKey;
 
@@ -22,48 +19,19 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ];
 
 export default function Home() {
-  const [csvUrl, setCsvUrl] = useState("");
   const [songs, setSongs] = useState<Song[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("id");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [query, setQuery] = useState("");
-  const [isEditor, setIsEditor] = useState(false);
-  const [editingSong, setEditingSong] = useState<Song | null>(null);
 
-  // 前回入力したCSV URLを復元
-  useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) setCsvUrl(saved);
-  }, []);
-
-  // エディタ認証状態を確認(httpOnly Cookieなのでサーバーに聞く)
-  const refreshEditorStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/editor-status");
-      const data = await res.json();
-      setIsEditor(!!data.authed);
-    } catch {
-      setIsEditor(false);
-    }
-  }, []);
-  useEffect(() => {
-    refreshEditorStatus();
-  }, [refreshEditorStatus]);
-
-  const logout = useCallback(async () => {
-    await fetch("/api/editor-logout", { method: "POST" });
-    setIsEditor(false);
-  }, []);
-
-  const loadCsv = useCallback(async (url: string) => {
-    if (!url.trim()) return;
+  const loadCsv = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/songs?url=${encodeURIComponent(url)}`);
+      const res = await fetch("/api/songs");
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "取得に失敗しました");
@@ -73,7 +41,6 @@ export default function Home() {
       }
       setSongs(data.songs);
       setWarnings(data.warnings ?? []);
-      window.localStorage.setItem(STORAGE_KEY, url);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(`通信エラー: ${message}`);
@@ -83,11 +50,10 @@ export default function Home() {
     }
   }, []);
 
-  // 保存済みURLがあれば自動で読み込む
+  // ページ読み込み時に自動でCSVを取得する
   useEffect(() => {
-    if (csvUrl) loadCsv(csvUrl);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    loadCsv();
+  }, [loadCsv]);
 
   const sortedSongs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -139,21 +105,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="csv-bar">
-        <input
-          type="text"
-          placeholder="楽曲一覧CSVのURL(公開済みGoogleスプレッドシートのCSVリンクなど)"
-          value={csvUrl}
-          onChange={(e) => setCsvUrl(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") loadCsv(csvUrl);
-          }}
-        />
-        <button className="btn" onClick={() => loadCsv(csvUrl)} disabled={loading}>
-          {loading ? "読込中..." : "読み込む"}
-        </button>
-      </div>
-
+      {loading && <div className="status-line">読み込み中...</div>}
       {error && <div className="status-line error">⚠ {error}</div>}
 
       {warnings.length > 0 && (
@@ -198,41 +150,10 @@ export default function Home() {
 
           <div className="song-list">
             {sortedSongs.map((song) => (
-              <SongCard
-                key={song.id}
-                song={song}
-                isEditor={isEditor}
-                onEdit={(s) => setEditingSong(s)}
-              />
+              <SongCard key={song.id} song={song} />
             ))}
           </div>
         </>
-      )}
-
-      {!loading && songs.length === 0 && !error && (
-        <div className="status-line">
-          CSVのURLを入力して「読み込む」を押してください。
-        </div>
-      )}
-
-      <div className="footer-link">
-        {isEditor ? (
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              logout();
-            }}
-          >
-            editor: on (ログアウト)
-          </a>
-        ) : (
-          <a href="/editor-login">edit</a>
-        )}
-      </div>
-
-      {editingSong && (
-        <EditorModal song={editingSong} onClose={() => setEditingSong(null)} />
       )}
     </div>
   );

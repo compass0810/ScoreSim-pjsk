@@ -7,10 +7,10 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ApiResponse>
 ) {
-  const { url } = req.query;
+  const url = process.env.SONGS_CSV_URL;
 
-  if (typeof url !== "string" || url.trim() === "") {
-    res.status(400).json({ error: "クエリパラメータ url が必要です" });
+  if (!url) {
+    res.status(500).json({ error: "サーバー側の環境変数 SONGS_CSV_URL が未設定です" });
     return;
   }
 

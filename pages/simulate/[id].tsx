@@ -203,8 +203,8 @@ export default function Simulate() {
               <div className="sim-score">{result.score.toLocaleString()}</div>
               <div className="sim-score-label">ALL PERFECT想定スコア</div>
               <div className="sim-sub-stats">
-                <span>ノーツ数: {result.noteCount}</span>
-                <span>重み合計: {result.totalWeight}</span>
+                <span>ノーツ数: {result.noteCount} (うち中間判定 {result.midJudgeCount})</span>
+                <span>重み合計: {result.totalWeight.toFixed(1)}</span>
                 <span>譜面Lv: {result.level}</span>
               </div>
               {result.warnings.length > 0 && (
@@ -229,7 +229,7 @@ export default function Simulate() {
         {chartFileName && (
           <iframe
             ref={iframeRef}
-            src="/tools/chart-editor.html?mode=view"
+            src="/viewer.html"
             title="譜面ビューアー"
             onLoad={postLoadIfReady}
             className="sim-iframe"

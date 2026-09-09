@@ -6,15 +6,7 @@ import {
 } from "@/components/DifficultyBadge";
 import type { DifficultyKey } from "@/lib/csv";
 
-export function SongCard({
-  song,
-  isEditor,
-  onEdit,
-}: {
-  song: Song;
-  isEditor?: boolean;
-  onEdit?: (song: Song) => void;
-}) {
+export function SongCard({ song }: { song: Song }) {
   const router = useRouter();
 
   const goToSimulate = (difficulty: DifficultyKey) => {
@@ -51,22 +43,6 @@ export function SongCard({
         <div className="song-id">#{song.id}</div>
       </div>
       <div className="badges">
-        {isEditor && (
-          <button
-            className="edit-pencil"
-            title={
-              song.chartFileName
-                ? `${song.chartFileName} を編集`
-                : "譜面ファイル未設定"
-            }
-            disabled={!song.chartFileName}
-            onClick={() => {
-              if (onEdit) onEdit(song);
-            }}
-          >
-            ✎
-          </button>
-        )}
         {DIFFICULTY_ORDER.map((d) => (
           <DifficultyBadge
             key={d}

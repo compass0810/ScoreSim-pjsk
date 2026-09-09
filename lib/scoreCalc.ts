@@ -17,6 +17,7 @@ export interface ScoreCalcResult {
   level: number | null;
   warnings: string[];
   chartDurationSec: number | null; // 最初のノーツ〜最後のノーツの時間(参考値)
+  midJudgeCount: number; // ロング中間の自動判定(8分グリッド)の個数(参考値)
 }
 
 const FEVER_MULTIPLIER = 1.5;
@@ -98,5 +99,6 @@ export function calcApScore(input: ScoreCalcInput): ScoreCalcResult | { error: s
     level: parsed.level,
     warnings: parsed.warnings,
     chartDurationSec,
+    midJudgeCount: parsed.midJudgeCount,
   };
 }

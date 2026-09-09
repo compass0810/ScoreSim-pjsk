@@ -1,7 +1,6 @@
 import { JWT } from "google-auth-library";
 
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
-const DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3";
 
 let cachedClient: JWT | null = null;
 
@@ -16,7 +15,7 @@ function getClient(): JWT | null {
       // Vercelの環境変数には改行がそのまま入れられないことが多いので、
       // "\n" というリテラル文字列を実際の改行に戻す。
       key: rawKey.replace(/\\n/g, "\n"),
-      scopes: ["https://www.googleapis.com/auth/drive"],
+      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
     });
   }
   return cachedClient;
@@ -91,34 +90,4 @@ export async function readChartFromDrive(
     return { ok: false, error: `ファイル本体の取得に失敗しました (HTTP ${res.status}): ${body.slice(0, 300)}` };
   }
   return { ok: true, content: await res.text() };
-}
-
-export interface DriveWriteResult {
-  ok: true;
-}
-
-/** ファイル名からフォルダ内を検索し、本文を新しい内容で上書きする。 */
-export async function writeChartToDrive(
-  fileName: string,
-  content: string
-): Promise<DriveWriteResult | DriveError> {
-  const lookup = await findFileIdByName(fileName);
-  if (!lookup.ok) return lookup;
-
-  const headers = await authHeader();
-  if (!headers) return configError();
-
-  const res = await fetch(
-    `${DRIVE_UPLOAD_BASE}/files/${lookup.id}?uploadType=media`,
-    {
-      method: "PATCH",
-      headers: { ...headers, "Content-Type": "text/plain; charset=UTF-8" },
-      body: content,
-    }
-  );
-  if (!res.ok) {
-    const body = await res.text();
-    return { ok: false, error: `保存に失敗しました (HTTP ${res.status}): ${body.slice(0, 300)}` };
-  }
-  return { ok: true };
 }

@@ -17,12 +17,10 @@
 
   .app-container{ display:flex; height:100vh; padding:16px; gap:16px; }
 
-  .editor-section, .viewer-section{
+  .viewer-section{
     display:flex; flex-direction:column; background:var(--panel); border-radius:14px;
     box-shadow:0 10px 30px rgba(0,0,0,.35); overflow:hidden; border:1px solid var(--line);
   }
-  .editor-section{ flex:0 0 380px; }
-  .app-container.view-mode .editor-section{ display:none; }
   .viewer-section{ flex:1; min-width:0; }
 
   .header-bar{
@@ -82,7 +80,6 @@
   }
   .note.trace{ background:transparent !important; border:2px dashed; box-shadow:none; }
   .note.none{ visibility:hidden; }
-  .long-body{ position:absolute; border-radius:5px; opacity:.5; z-index:1; }
   .mid-dot{ position:absolute; border-radius:50%; z-index:2; box-shadow:0 0 4px rgba(255,255,255,.6); }
 
   .dir-wedge{ position:absolute; width:0; height:0; z-index:4; filter:drop-shadow(0 0 2px rgba(0,0,0,.6)); }
@@ -110,12 +107,7 @@
     cursor:pointer; display:flex; align-items:center; justify-content:center;
   }
   .help-btn:hover{ border-color:var(--blue); }
-  .save-btn{
-    background:#1a2230; border:1px solid #2f3850; color:var(--text);
-    border-radius:5px; padding:3px 12px; font-size:11px; cursor:pointer;
-  }
-  .save-btn:hover{ border-color:var(--blue); }
-  .save-btn:disabled{ opacity:.5; cursor:default; }  .modal-overlay{ position:fixed; inset:0; background:rgba(6,7,10,.72); z-index:100; display:flex; align-items:center; justify-content:center; padding:40px; }
+  .modal-overlay{ position:fixed; inset:0; background:rgba(6,7,10,.72); z-index:100; display:flex; align-items:center; justify-content:center; padding:40px; }
   .modal-overlay.hidden{ display:none; }
   .modal{ background:var(--panel); border:1px solid var(--line); border-radius:10px; width:min(720px,100%); max-height:86vh; overflow-y:auto; padding:22px 26px; }
   .modal h2{ margin:0 0 4px; font-size:16px; }
@@ -153,14 +145,9 @@
 </div>
 
 <div class="app-container" id="appContainer">
-  <section class="editor-section">
-    <div class="header-bar"><span>CHART SOURCE</span><span id="fileNameLabel" style="font-weight:400;color:var(--sub);font-size:11px;"></span><button id="saveBtn" class="save-btn" style="display:none;">保存</button></div>
-    <textarea id="src" spellcheck="false"></textarea>
-  </section>
-
-  <section class="viewer-section">
+  <section class="viewer-section" style="flex:1;">
     <div class="header-bar">
-      <span>LIVE PREVIEW</span>
+      <span>CHART VIEWER</span>
       <div class="courses" id="courseTabs"></div>
     </div>
     <div class="controls-bar">
@@ -205,6 +192,7 @@ LEVEL:22
 {MEASURE:3/4}000000000000,000000000000,000000000000;
 #END
 `;
+let currentSrc = DEFAULT_SRC; // 親ウィンドウから読み込むまでの初期表示用
 
 // ---- type metadata ----------------------------------------------------
 const TAP = {
@@ -363,6 +351,8 @@ function parseCourse(courseName, level, body){
   const longSegments=[];
   let totalNotes=0;
   let pendingChanges=[];
+  let absTimeMs=0;
+  const measureGrids=[]; // 8分グリッド計算用: 小節ごとの{startTimeMs,durationMs,bpm}
 
   measuresRaw.forEach((measureStr, mIdx)=>{
     const groupsRaw = measureStr.split(',').filter(g=>g.length>0);
@@ -379,10 +369,16 @@ function parseCourse(courseName, level, body){
     const quarterMs = ()=> 60000/(state.bpm||120);
     const measureDurMs = ()=> quarterMs()*4*state.timesig.n/state.timesig.d;
     let rIdx=0;
+    let gridCaptured=false;
     parsedGroups.forEach(g=>{
       if(g.directive) applyDirective(g.directive, state, pendingChanges, tracker, warnings, ctx0);
       if(g.notesStr.length===0) return;
       const ctx = ctx0;
+      if(!gridCaptured){
+        measureGrids.push({startTimeMs:absTimeMs, durationMs:measureDurMs(), bpm:state.bpm||120});
+        gridCaptured=true;
+      }
+      const sliceDurMs = measureDurMs()/N;
       let tokens = tokenizeGroup(g.notesStr, warnings, ctx);
       tokens = expandTokens(tokens, warnings, ctx);
       let lane=0;
@@ -405,7 +401,7 @@ function parseCourse(courseName, level, body){
         else if(k==='long_start'||k==='flick_long_start'){
           if(!tok.info.none) totalNotes++;
           if(!tok.id) warnings.push(ctx+`: 始点 "${tok.char}" にIDがありません(終点と紐付けできません)`);
-          else openLongs[tok.id]={char:tok.char, laneStart:tok.laneStart, laneEnd:tok.laneEnd, row:globalRow, mids:[]};
+          else openLongs[tok.id]={char:tok.char, laneStart:tok.laneStart, laneEnd:tok.laneEnd, row:globalRow, startTimeMs:absTimeMs, mids:[]};
         }
         else if(k==='long_end'||k==='flick_long_end'){
           if(!tok.info.none) totalNotes++;
@@ -413,19 +409,39 @@ function parseCourse(courseName, level, body){
           else if(!openLongs[tok.id]) warnings.push(ctx+`: ID ${tok.id} に対応する始点が見つかりません`);
           else {
             const st = openLongs[tok.id];
-            longSegments.push({id:tok.id, startRow:st.row, endRow:globalRow, startLane:st.laneStart, endLane:tok.laneStart});
+            longSegments.push({id:tok.id, startRow:st.row, endRow:globalRow,
+              startLane:st.laneStart, startLaneEnd:st.laneEnd,
+              endLane:tok.laneStart, endLaneEnd:tok.laneEnd,
+              startTimeMs:st.startTimeMs, endTimeMs:absTimeMs});
             delete openLongs[tok.id];
           }
         }
         else if(k==='long_mid'){ totalNotes++; }
       });
+      absTimeMs += sliceDurMs;
       rIdx++;
     });
   });
 
   Object.keys(openLongs).forEach(id=>warnings.push(`未閉合のロング始点 (ID ${id})`));
+
+  // ロング中間の自動判定(始点・終点を除き8分グリッドに重なる位置)を数える
+  const grid=[];
+  measureGrids.forEach(mg=>{
+    const eighthMs = 30000/(mg.bpm||120);
+    if(eighthMs<=0) return;
+    for(let t=mg.startTimeMs; t<mg.startTimeMs+mg.durationMs-1e-6; t+=eighthMs) grid.push(t);
+  });
+  const EPS=1;
+  let midJudgeCount=0;
+  longSegments.forEach(seg=>{
+    if(seg.startTimeMs===undefined || seg.endTimeMs===undefined) return;
+    grid.forEach(t=>{ if(t>seg.startTimeMs+EPS && t<seg.endTimeMs-EPS) midJudgeCount++; });
+  });
+  totalNotes += midJudgeCount;
+
   const missingSkills = [1,2,3,4,5,6].filter(n=>!tracker.skillSeen.has(n));
-  return {courseName, level, rows, longSegments, totalNotes, measureCount: measuresRaw.length, warnings,
+  return {courseName, level, rows, longSegments, totalNotes, midJudgeCount, measureCount: measuresRaw.length, warnings,
     skillCount: tracker.skillSeen.size, feverCount: tracker.feverCount, missingSkills};
 }
 
@@ -485,7 +501,7 @@ function buildNoteReference(){
 }
 
 function render(){
-  const src = document.getElementById('src').value;
+  const src = currentSrc;
   let data;
   try{ data = parseAll(src); }
   catch(e){ document.getElementById('chart-container').innerHTML = ''; document.getElementById('statsBar').textContent='パースエラー: '+e.message; return; }
@@ -587,41 +603,31 @@ function render(){
     container.appendChild(mDiv);
   }
 
-  // cross-measure long bars via absolute overlay
+  // ロングノーツの塗り: 始点の左端〜終点の左端、始点の右端〜終点の右端で
+  // 囲まれる四角形(台形)を、コンテナ全体を覆う1枚のSVGにまとめて描画する。
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const overlay = document.createElementNS(svgNS, 'svg');
+  overlay.setAttribute('style', 'position:absolute; left:0; top:0; width:100%; height:100%; z-index:1; overflow:visible; pointer-events:none;');
   c.longSegments.forEach(seg=>{
     const s = rowLookup[seg.startRow], e = rowLookup[seg.endRow];
     if(!s || !e) return;
-    if(s.mDiv === e.mDiv){
-      // same measure: simple bar inside the block
-      const bar=document.createElement('div');
-      bar.className='long-body';
-      const lane = seg.startLane;
-      bar.style.left = (lane*LANE_WIDTH + LANE_WIDTH/2 - 4)+'px';
-      bar.style.width = '8px';
-      const top = Math.min(s.localBottom, e.localBottom), bottom = Math.max(s.localBottom, e.localBottom);
-      bar.style.bottom = top+'px';
-      bar.style.height = (bottom-top)+'px';
-      bar.style.background = 'var(--green)';
-      s.mDiv.appendChild(bar);
-    } else {
-      // spans multiple measures: draw one overlay bar per container using offsetTop (post-layout)
-      const startAbsTop = s.mDiv.offsetTop + (s.measureHeight - s.localBottom);
-      const endAbsTop = e.mDiv.offsetTop + (e.measureHeight - e.localBottom);
-      const top = Math.min(startAbsTop, endAbsTop), bottom = Math.max(startAbsTop, endAbsTop);
-      const bar=document.createElement('div');
-      bar.className='long-body';
-      bar.style.position='absolute';
-      bar.style.left = (s.mDiv.offsetLeft + seg.startLane*LANE_WIDTH + LANE_WIDTH/2 - 4)+'px';
-      bar.style.width='8px';
-      bar.style.top = top+'px';
-      bar.style.height = (bottom-top)+'px';
-      bar.style.background = 'var(--green)';
-      container.appendChild(bar);
-    }
+    const x1L = s.mDiv.offsetLeft + seg.startLane*LANE_WIDTH;
+    const x1R = s.mDiv.offsetLeft + (seg.startLaneEnd+1)*LANE_WIDTH;
+    const y1 = s.mDiv.offsetTop + (s.measureHeight - s.localBottom);
+    const x2L = e.mDiv.offsetLeft + seg.endLane*LANE_WIDTH;
+    const x2R = e.mDiv.offsetLeft + (seg.endLaneEnd+1)*LANE_WIDTH;
+    const y2 = e.mDiv.offsetTop + (e.measureHeight - e.localBottom);
+    const points = `${x1L},${y1} ${x1R},${y1} ${x2R},${y2} ${x2L},${y2}`;
+    const poly = document.createElementNS(svgNS, 'polygon');
+    poly.setAttribute('points', points);
+    poly.setAttribute('fill', '#3ddc97');
+    poly.setAttribute('fill-opacity', '0.45');
+    overlay.appendChild(poly);
   });
+  container.appendChild(overlay);
 
   document.getElementById('statsBar').innerHTML =
-    `<div>NOTES: <span class="stat-val">${c.totalNotes}</span></div>
+    `<div>NOTES: <span class="stat-val">${c.totalNotes}</span> <span style="color:#5a6478;">(中間判定${c.midJudgeCount})</span></div>
      <div>MEASURES: <span class="stat-val">${c.measureCount}</span></div>
      <div>LONG: <span class="stat-val">${c.longSegments.length}</span></div>
      <div>BPM: <span class="stat-val">${c.bpmInit||'-'}</span></div>
@@ -634,43 +640,25 @@ document.getElementById('helpBtn').addEventListener('click', ()=>document.getEle
 document.getElementById('helpClose').addEventListener('click', ()=>document.getElementById('helpOverlay').classList.add('hidden'));
 document.getElementById('helpOverlay').addEventListener('click', (e)=>{ if(e.target.id==='helpOverlay') e.target.classList.add('hidden'); });
 
-document.getElementById('src').value = DEFAULT_SRC;
-document.getElementById('src').addEventListener('input', render);
 document.getElementById('auto-scale').addEventListener('change', render);
 document.getElementById('base-height').addEventListener('input', render);
 document.getElementById('slot-height').addEventListener('input', render);
 render();
 
-// ---- 親ウィンドウ(Next.jsアプリ)とのpostMessage連携 -----------------------
-// 親から{type:'load-chart', filename, content, courseName}を受け取ったら読み込み、
-// 保存ボタンで{type:'save-chart', content}を親に送り返す。
-const viewMode = new URLSearchParams(location.search).get('mode') === 'view';
-if(viewMode) document.getElementById('appContainer').classList.add('view-mode');
-
-let currentFileName = null;
+// ---- 親ウィンドウ(スコアシミュ画面)からのpostMessageで内容を受け取る ----------
+// 閲覧専用のビューアーなので、保存や編集の機能は持たない。
 window.addEventListener('message', (e)=>{
   const msg = e.data;
   if(!msg || msg.type !== 'load-chart') return;
-  currentFileName = msg.filename || null;
-  document.getElementById('src').value = msg.content || '';
-  document.getElementById('fileNameLabel').textContent = currentFileName || '';
-  document.getElementById('saveBtn').style.display = (currentFileName && !viewMode) ? 'inline-block' : 'none';
+  currentSrc = msg.content || '';
   if(msg.courseName){
     try{
-      const data = parseAll(msg.content || '');
+      const data = parseAll(currentSrc);
       const idx = data.courses.findIndex(c=>c.courseName.toUpperCase()===String(msg.courseName).toUpperCase());
       if(idx>=0) currentCourseIdx = idx;
     }catch(err){ /* ignore, falls back to currentCourseIdx as-is */ }
   }
   render();
-});
-document.getElementById('saveBtn').addEventListener('click', ()=>{
-  if(!currentFileName) return;
-  const btn = document.getElementById('saveBtn');
-  btn.disabled = true;
-  btn.textContent = '保存中...';
-  window.parent.postMessage({ type:'save-chart', filename: currentFileName, content: document.getElementById('src').value }, '*');
-  setTimeout(()=>{ btn.disabled=false; btn.textContent='保存'; }, 800);
 });
 </script>
 </body>

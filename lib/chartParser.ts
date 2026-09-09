@@ -1,9 +1,12 @@
 // スコア計算専用の軽量パーサー。
-// public/tools/chart-editor.html にある描画用パーサーとロジックは共通だが、
+// 描画用パーサー(別配布の譜面エディタ/public/viewer.html由来のもの)とロジックは共通だが、
 // こちらは色やレーン座標などの描画情報を持たず、
 // 「何コンボ目にどの重みのノーツが、譜面内の何ms地点に来るか」と
 // 「SKILL/FEVERの各マーカーが何ms地点にあるか」だけを追う。
-// SKILL/FEVERが実際にどこまで効果を持続するか(秒数)は呼び出し側(scoreCalc)で扱う。
+//
+// ロングノーツの中間判定(始点・終点を除き8分グリッドに重なる位置で自動的に
+// コンボが加算される仕様)もここで計算し、重み0.1の仮想ノーツとして
+// 実ノーツ列にマージしてからコンボ番号を振り直す。
 
 export const NOTE_WEIGHT: Record<string, number> = {
   "1": 1, "2": 2, "3": 0.1, "4": 0.2, // タップ: 通常/クリティカル/トレース/クリティカルトレース
@@ -13,21 +16,22 @@ export const NOTE_WEIGHT: Record<string, number> = {
   J: 0.2, K: 0.2, L: 0.2, // フリック クリティカルトレース
   a: 1, b: 2, c: 0.1, d: 0.2, // ロング始点: 通常/クリティカル/トレース/クリティカルトレース
   f: 1, g: 2, h: 0.1, i: 0.2, // ロング終点: 同上
-  k: 0.1, l: 0.1, // ロング中間(色に関わらず同じ重み)
+  k: 0.1, l: 0.1, // ロング中間(明示的な粒。色に関わらず同じ重み)
   m: 1, n: 1, o: 1, // フリック始点 通常
   p: 3, q: 3, r: 3, // フリック始点 クリティカル
   s: 1, t: 1, u: 1, // フリック終点 通常
   v: 3, w: 3, x: 3, // フリック終点 クリティカル
 };
+const MID_JUDGE_WEIGHT = 0.1; // ロング中間の自動判定(8分グリッド)の重み
 const NO_SCORE = new Set(["0", "e", "j"]);
-const LINKABLE = new Set([
-  "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
-  "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x",
-]);
+const LONG_START_CHARS = new Set(["a", "b", "c", "d", "e", "m", "n", "o", "p", "q", "r"]);
+const LONG_END_CHARS = new Set(["f", "g", "h", "i", "j", "s", "t", "u", "v", "w", "x"]);
+const LINKABLE = new Set([...LONG_START_CHARS, ...LONG_END_CHARS]);
 
 interface Token {
   char: string;
   width: number;
+  id: string | null;
 }
 
 function tokenizeGroup(str: string, warnings: string[], ctx: string): Token[] {
@@ -43,12 +47,20 @@ function tokenizeGroup(str: string, warnings: string[], ctx: string): Token[] {
       }
       const content = str.slice(i + 1, close);
       i = close + 1;
-      if (LINKABLE.has(content[0]) && /^\d\d/.test(str.slice(i, i + 2))) i += 2;
-      tokens.push({ char: content[0], width: content.length });
+      let id: string | null = null;
+      if (LINKABLE.has(content[0]) && /^\d\d/.test(str.slice(i, i + 2))) {
+        id = str.slice(i, i + 2);
+        i += 2;
+      }
+      tokens.push({ char: content[0], width: content.length, id });
     } else {
       i++;
-      if (LINKABLE.has(c) && /^\d\d/.test(str.slice(i, i + 2))) i += 2;
-      tokens.push({ char: c, width: 1 });
+      let id: string | null = null;
+      if (LINKABLE.has(c) && /^\d\d/.test(str.slice(i, i + 2))) {
+        id = str.slice(i, i + 2);
+        i += 2;
+      }
+      tokens.push({ char: c, width: 1, id });
     }
   }
   return tokens;
@@ -80,10 +92,9 @@ function parseGroup(raw: string): { directive: Directive | null; notesStr: strin
 }
 
 export interface ScoredNote {
-  char: string;
   weight: number;
   comboIndex: number; // 1始まり。譜面データの上から下(=ビューアーの下から上)、同時は左から右の順で採番
-  timeMs: number; // 譜面内での経過時間(先頭からのms)
+  timeMs: number;
 }
 
 export interface Marker {
@@ -101,6 +112,7 @@ export interface ParsedCourseForScoring {
   feverMarker: Marker | null;
   firstNoteTimeMs: number | null;
   lastNoteTimeMs: number | null;
+  midJudgeCount: number; // ロング中間の自動判定の個数(参考値)
 }
 
 function parseCourseForScoring(
@@ -119,12 +131,16 @@ function parseCourseForScoring(
   const skillSeen = new Set<number>();
   let feverCount = 0;
 
-  const notes: ScoredNote[] = [];
-  let comboIndex = 0;
-  let totalWeight = 0;
+  // 実際に書かれたノーツ(始点・終点・タップ・粒など)
+  const notes: Omit<ScoredNote, "comboIndex">[] = [];
   let absTimeMs = 0;
-  let firstNoteTimeMs: number | null = null;
-  let lastNoteTimeMs: number | null = null;
+
+  // ロング始点・終点の対応づけ(IDベース)。中間判定の8分グリッド計算に使う。
+  const openLongs: Record<string, number> = {}; // id -> startTimeMs
+  const longSpans: { startTimeMs: number; endTimeMs: number }[] = [];
+
+  // 8分グリッド計算用に、小節ごとの基準(開始時刻・BPM)を記録しておく
+  const measureGrids: { startTimeMs: number; durationMs: number; bpm: number }[] = [];
 
   measuresRaw.forEach((measureStr, mIdx) => {
     const groupsRaw = measureStr.split(",").filter((g) => g.length > 0);
@@ -169,31 +185,95 @@ function parseCourseForScoring(
       }
     }
 
+    let gridCaptured = false;
     parsedGroups.forEach((g) => {
       if (g.directive) applyDirective(g.directive);
       if (g.notesStr.length === 0) return;
+
+      // この小節の8分グリッド基準は、最初の実ノーツグループの時点(directive適用後)で確定させる
+      if (!gridCaptured) {
+        measureGrids.push({
+          startTimeMs: absTimeMs,
+          durationMs: measureDurMs(),
+          bpm: state.bpm || 120,
+        });
+        gridCaptured = true;
+      }
 
       const sliceDurMs = measureDurMs() / N;
       let tokens = tokenizeGroup(g.notesStr, warnings, ctx);
       tokens = expandTokens(tokens, warnings, ctx);
 
       tokens.forEach((t) => {
-        if (NO_SCORE.has(t.char)) return;
+        if (NO_SCORE.has(t.char)) {
+          // ノーツなし始点・終点(e/j)もロングの経路としてはIDで対応づける
+          if (t.char === "e" || t.char === "j") {
+            if (t.char === "e" && t.id) openLongs[t.id] = absTimeMs;
+            if (t.char === "j" && t.id) {
+              if (openLongs[t.id] !== undefined) {
+                longSpans.push({ startTimeMs: openLongs[t.id], endTimeMs: absTimeMs });
+                delete openLongs[t.id];
+              } else {
+                warnings.push(`${ctx}: ID ${t.id} に対応する始点が見つかりません`);
+              }
+            }
+          }
+          return;
+        }
         const weight = NOTE_WEIGHT[t.char];
         if (weight === undefined) {
           warnings.push(`${ctx}: 未知のノーツ記号 "${t.char}"`);
           return;
         }
-        comboIndex++;
-        totalWeight += weight;
-        if (firstNoteTimeMs === null) firstNoteTimeMs = absTimeMs;
-        lastNoteTimeMs = absTimeMs;
-        notes.push({ char: t.char, weight, comboIndex, timeMs: absTimeMs });
+        notes.push({ weight, timeMs: absTimeMs });
+
+        if (LONG_START_CHARS.has(t.char)) {
+          if (!t.id) {
+            warnings.push(`${ctx}: 始点 "${t.char}" にIDがありません(中間判定を計算できません)`);
+          } else {
+            openLongs[t.id] = absTimeMs;
+          }
+        } else if (LONG_END_CHARS.has(t.char)) {
+          if (!t.id) {
+            warnings.push(`${ctx}: 終点 "${t.char}" にIDがありません`);
+          } else if (openLongs[t.id] === undefined) {
+            warnings.push(`${ctx}: ID ${t.id} に対応する始点が見つかりません`);
+          } else {
+            longSpans.push({ startTimeMs: openLongs[t.id], endTimeMs: absTimeMs });
+            delete openLongs[t.id];
+          }
+        }
       });
 
       absTimeMs += sliceDurMs;
     });
   });
+
+  Object.keys(openLongs).forEach((id) => warnings.push(`未閉合のロング始点 (ID ${id})`));
+
+  // ---- ロング中間の自動判定(8分グリッド)を計算してマージ ----
+  const grid: number[] = [];
+  measureGrids.forEach((mg) => {
+    const eighthMs = 30000 / (mg.bpm || 120); // 8分音符 = 4分音符の半分。BPMだけで決まる(拍子によらない)
+    if (eighthMs <= 0) return;
+    for (let t = mg.startTimeMs; t < mg.startTimeMs + mg.durationMs - 1e-6; t += eighthMs) {
+      grid.push(t);
+    }
+  });
+  const EPS = 1; // ms。始点・終点そのものと誤って重複計上しないための許容誤差
+  const midJudgeNotes: Omit<ScoredNote, "comboIndex">[] = [];
+  longSpans.forEach((span) => {
+    grid.forEach((t) => {
+      if (t > span.startTimeMs + EPS && t < span.endTimeMs - EPS) {
+        midJudgeNotes.push({ weight: MID_JUDGE_WEIGHT, timeMs: t });
+      }
+    });
+  });
+
+  // 時刻順にマージしてコンボ番号を振り直す(同時刻は元の並び= 実ノーツ優先を維持する安定ソート)
+  const merged = [...notes, ...midJudgeNotes].sort((a, b) => a.timeMs - b.timeMs);
+  const finalNotes: ScoredNote[] = merged.map((n, idx) => ({ ...n, comboIndex: idx + 1 }));
+  const totalWeight = finalNotes.reduce((s, n) => s + n.weight, 0);
 
   const missingSkills = [1, 2, 3, 4, 5, 6].filter((n) => !skillSeen.has(n));
   if (skillSeen.size > 0 && missingSkills.length > 0) {
@@ -201,16 +281,18 @@ function parseCourseForScoring(
   }
 
   const levelNum = Number(level);
+  const timeValues = finalNotes.map((n) => n.timeMs);
   return {
     courseName,
     level: Number.isFinite(levelNum) ? levelNum : null,
-    notes,
+    notes: finalNotes,
     totalWeight,
     warnings,
     skillMarkers,
     feverMarker,
-    firstNoteTimeMs,
-    lastNoteTimeMs,
+    firstNoteTimeMs: timeValues.length ? Math.min(...timeValues) : null,
+    lastNoteTimeMs: timeValues.length ? Math.max(...timeValues) : null,
+    midJudgeCount: midJudgeNotes.length,
   };
 }
 
